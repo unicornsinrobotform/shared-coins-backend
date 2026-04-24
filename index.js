@@ -468,6 +468,69 @@ app.get('/leaderboard', async (req, res) => {
   res.send(`🏆 Top 5 coin goblins: ${leaderboard}`);
 });
 
+app.post('/fishing-reward', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  try {
+    const {
+      twitch_login,
+      display_name,
+      rarity,
+      catch_name,
+      source_channel_name
+    } = req.body;
+
+    const cleanRarity = String(rarity || '').toLowerCase();
+    const streamName = source_channel_name || 'LurkBait Fishing';
+
+    const rewardMap = {
+      junk: 0,
+      common: 0,
+      uncommon: 0,
+      rare: 10,
+      epic: 25,
+      legendary: 75
+    };
+
+    const rewardAmount = rewardMap[cleanRarity] ?? 0;
+
+    const viewer = await getOrCreateViewer({
+      twitch_login,
+      display_name
+    });
+
+    if (rewardAmount <= 0) {
+      return res.send('');
+    }
+
+    const addError = await addCoinTransaction({
+      viewer,
+      amount: rewardAmount,
+      reason: `fishing reward: ${rarity} ${catch_name}`,
+      sourceChannelId: 'lurkbait',
+      sourceChannelName: streamName,
+      eventId: `fish_${viewer.twitch_user_id}_${Date.now()}_${randomUUID()}`
+    });
+
+    if (addError) {
+      return res.status(500).send(`Fishing reward failed: ${addError.message}`);
+    }
+
+    const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
+
+    const messages = [
+      `${viewer.display_name} caught a ${rarity} ${catch_name} and earned ${rewardAmount} coins 💅 New balance: ${newBalance}`,
+      `${viewer.display_name} pulled a ${rarity} ${catch_name} and the economy said +${rewardAmount} coins 😭`,
+      `${viewer.display_name} caught a ${rarity} ${catch_name}. Okay fisher icon, +${rewardAmount} coins 🎣`,
+      `${viewer.display_name} got rewarded for a ${rarity} ${catch_name}: +${rewardAmount} coins 👀`
+    ];
+
+    res.send(messages[Math.floor(Math.random() * messages.length)]);
+  } catch (error) {
+    res.status(500).send(error.message || 'Fishing reward failed.');
+  }
+});
+
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);
 });
