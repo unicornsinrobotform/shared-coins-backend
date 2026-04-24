@@ -207,7 +207,7 @@ app.post('/daily', async (req, res) => {
       reason: `daily claim from ${streamName}`,
       sourceChannelId: source_channel_id || 'daily',
       sourceChannelName: streamName,
-      eventId: `daily_${viewer.twitch_user_id}_${streamName}_${today}`
+      eventId: `daily_${viewer.twitch_user_id}_${streamName}_${today}_${randomUUID()}`
     });
 
     if (addError) {
