@@ -224,6 +224,41 @@ app.post('/daily', async (req, res) => {
   }
 });
 
+app.post('/admin/reset-daily', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  const {
+    target_username,
+    admin_username,
+    source_channel_name
+  } = req.body;
+
+  const streamName = source_channel_name || 'Unknown Stream';
+  const today = getCentralDateString();
+  const viewer = await getViewerByUsername(target_username);
+
+  if (!viewer) {
+    return res.status(404).send(`${target_username} is not in the coin bank yet.`);
+  }
+
+  const { error, count } = await supabase
+    .from('daily_claims')
+    .delete({ count: 'exact' })
+    .eq('twitch_user_id', viewer.twitch_user_id)
+    .eq('source_channel_name', streamName)
+    .eq('claim_date', today);
+
+  if (error) {
+    return res.status(500).send(`Could not reset daily: ${error.message}`);
+  }
+
+  if (!count) {
+    return res.send(`${viewer.display_name} did not have a daily claim for ${streamName} today. Nothing to reset 😌`);
+  }
+
+  res.send(`${viewer.display_name}'s daily claim for ${streamName} has been reset by ${admin_username || 'a mod'} 🔄`);
+});
+
 app.get('/balance/:user_id', async (req, res) => {
   const balance = await getBalanceByUserId(req.params.user_id);
   res.json({ balance });
