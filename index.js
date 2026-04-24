@@ -11,6 +11,8 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+const DAILY_AMOUNT = parseInt(process.env.DAILY_AMOUNT || '50', 10);
+
 function checkApiKey(req, res) {
   const apiKey = req.headers['x-api-key'];
 
@@ -22,20 +24,54 @@ function checkApiKey(req, res) {
   return true;
 }
 
+function cleanUsername(username) {
+  return String(username || '').replace('@', '').toLowerCase();
+}
+
+function getCentralDateString() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+}
+
 async function getViewerByUsername(username) {
-  const cleanUsername = username.replace('@', '').toLowerCase();
+  const clean = cleanUsername(username);
 
   const { data, error } = await supabase
     .from('viewers')
     .select('twitch_user_id, twitch_login, display_name')
-    .eq('twitch_login', cleanUsername)
+    .eq('twitch_login', clean)
     .single();
 
-  if (error || !data) {
-    return null;
-  }
-
+  if (error || !data) return null;
   return data;
+}
+
+async function getOrCreateViewer({ twitch_user_id, twitch_login, display_name }) {
+  const cleanLogin = cleanUsername(twitch_login || display_name);
+  const userId = twitch_user_id || `username:${cleanLogin}`;
+  const display = display_name || twitch_login || cleanLogin;
+
+  const { error } = await supabase
+    .from('viewers')
+    .upsert({
+      twitch_user_id: userId,
+      twitch_login: cleanLogin,
+      display_name: display
+    }, {
+      onConflict: 'twitch_user_id'
+    });
+
+  if (error) throw error;
+
+  return {
+    twitch_user_id: userId,
+    twitch_login: cleanLogin,
+    display_name: display
+  };
 }
 
 async function getBalanceByUserId(userId) {
@@ -62,8 +98,8 @@ async function addCoinTransaction({
     p_display_name: viewer.display_name,
     p_amount: amount,
     p_reason: reason,
-    p_source_channel_id: sourceChannelId || 'manual_admin',
-    p_source_channel_name: sourceChannelName || 'Admin Command',
+    p_source_channel_id: sourceChannelId || 'manual',
+    p_source_channel_name: sourceChannelName || 'Unknown Stream',
     p_twitch_event_id: eventId || randomUUID()
   });
 
@@ -99,28 +135,78 @@ app.post('/add-coins', async (req, res) => {
     p_twitch_event_id: twitch_event_id
   });
 
-  if (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
+  if (error) return res.status(500).json({ error: error.message });
 
   res.json({ success: true });
 });
 
+app.post('/daily', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  try {
+    const {
+      twitch_user_id,
+      twitch_login,
+      display_name,
+      source_channel_id,
+      source_channel_name
+    } = req.body;
+
+    const streamName = source_channel_name || 'Unknown Stream';
+    const today = getCentralDateString();
+
+    const viewer = await getOrCreateViewer({
+      twitch_user_id,
+      twitch_login,
+      display_name
+    });
+
+    const { error: claimError } = await supabase
+      .from('daily_claims')
+      .insert({
+        twitch_user_id: viewer.twitch_user_id,
+        source_channel_name: streamName,
+        claim_date: today
+      });
+
+    if (claimError) {
+      if (claimError.code === '23505') {
+        return res.send(`${viewer.display_name} already claimed today's daily from ${streamName} 😭 come back tomorrow`);
+      }
+
+      return res.status(500).send(`Daily claim failed: ${claimError.message}`);
+    }
+
+    const addError = await addCoinTransaction({
+      viewer,
+      amount: DAILY_AMOUNT,
+      reason: `daily claim from ${streamName}`,
+      sourceChannelId: source_channel_id || 'daily',
+      sourceChannelName: streamName,
+      eventId: `daily_${viewer.twitch_user_id}_${streamName}_${today}`
+    });
+
+    if (addError) {
+      return res.status(500).send(`Coins could not be added: ${addError.message}`);
+    }
+
+    const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
+
+    res.send(`${viewer.display_name} claimed ${DAILY_AMOUNT} daily coins from ${streamName} 💅 New balance: ${newBalance} coins`);
+  } catch (error) {
+    res.status(500).send(error.message || 'Daily claim failed.');
+  }
+});
+
 app.get('/balance/:user_id', async (req, res) => {
-  const { user_id } = req.params;
-
-  const balance = await getBalanceByUserId(user_id);
-
+  const balance = await getBalanceByUserId(req.params.user_id);
   res.json({ balance });
 });
 
 app.get('/coins/:username', async (req, res) => {
   const viewer = await getViewerByUsername(req.params.username);
 
-  if (!viewer) {
-    return res.json({ balance: 0 });
-  }
+  if (!viewer) return res.json({ balance: 0 });
 
   const balance = await getBalanceByUserId(viewer.twitch_user_id);
 
@@ -128,7 +214,7 @@ app.get('/coins/:username', async (req, res) => {
 });
 
 app.get('/coins-message/:username', async (req, res) => {
-  const username = req.params.username.toLowerCase();
+  const username = cleanUsername(req.params.username);
   const viewer = await getViewerByUsername(username);
 
   if (!viewer) {
@@ -177,45 +263,30 @@ app.get('/coins-message/:username', async (req, res) => {
     ];
   }
 
-  const message = messages[Math.floor(Math.random() * messages.length)];
-  res.send(message);
+  res.send(messages[Math.floor(Math.random() * messages.length)]);
 });
 
 app.post('/admin/add-coins', async (req, res) => {
   if (!checkApiKey(req, res)) return;
 
-  const {
-    target_username,
-    amount,
-    admin_username,
-    source_channel_id,
-    source_channel_name
-  } = req.body;
+  const { target_username, amount, admin_username, source_channel_id, source_channel_name } = req.body;
 
   const viewer = await getViewerByUsername(target_username);
   const coinAmount = parseInt(amount, 10);
 
-  if (!viewer) {
-    return res.status(404).send(`${target_username} is not in the coin bank yet.`);
-  }
-
-  if (!Number.isFinite(coinAmount) || coinAmount <= 0) {
-    return res.status(400).send(`Amount must be a positive number.`);
-  }
+  if (!viewer) return res.status(404).send(`${target_username} is not in the coin bank yet.`);
+  if (!Number.isFinite(coinAmount) || coinAmount <= 0) return res.status(400).send(`Amount must be a positive number.`);
 
   const error = await addCoinTransaction({
     viewer,
     amount: coinAmount,
     reason: `admin add by ${admin_username || 'unknown admin'}`,
     sourceChannelId: source_channel_id,
-    sourceChannelName: source_channel_name,
+    sourceChannelName: source_channel_name || 'Admin Command',
     eventId: `admin_add_${randomUUID()}`
   });
 
-  if (error) {
-    console.error(error);
-    return res.status(500).send(`Could not add coins: ${error.message}`);
-  }
+  if (error) return res.status(500).send(`Could not add coins: ${error.message}`);
 
   const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
 
@@ -225,38 +296,24 @@ app.post('/admin/add-coins', async (req, res) => {
 app.post('/admin/remove-coins', async (req, res) => {
   if (!checkApiKey(req, res)) return;
 
-  const {
-    target_username,
-    amount,
-    admin_username,
-    source_channel_id,
-    source_channel_name
-  } = req.body;
+  const { target_username, amount, admin_username, source_channel_id, source_channel_name } = req.body;
 
   const viewer = await getViewerByUsername(target_username);
   const coinAmount = parseInt(amount, 10);
 
-  if (!viewer) {
-    return res.status(404).send(`${target_username} is not in the coin bank yet.`);
-  }
-
-  if (!Number.isFinite(coinAmount) || coinAmount <= 0) {
-    return res.status(400).send(`Amount must be a positive number.`);
-  }
+  if (!viewer) return res.status(404).send(`${target_username} is not in the coin bank yet.`);
+  if (!Number.isFinite(coinAmount) || coinAmount <= 0) return res.status(400).send(`Amount must be a positive number.`);
 
   const error = await addCoinTransaction({
     viewer,
     amount: -coinAmount,
     reason: `admin remove by ${admin_username || 'unknown admin'}`,
     sourceChannelId: source_channel_id,
-    sourceChannelName: source_channel_name,
+    sourceChannelName: source_channel_name || 'Admin Command',
     eventId: `admin_remove_${randomUUID()}`
   });
 
-  if (error) {
-    console.error(error);
-    return res.status(500).send(`Could not remove coins: ${error.message}`);
-  }
+  if (error) return res.status(500).send(`Could not remove coins: ${error.message}`);
 
   const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
 
@@ -266,24 +323,13 @@ app.post('/admin/remove-coins', async (req, res) => {
 app.post('/admin/set-coins', async (req, res) => {
   if (!checkApiKey(req, res)) return;
 
-  const {
-    target_username,
-    amount,
-    admin_username,
-    source_channel_id,
-    source_channel_name
-  } = req.body;
+  const { target_username, amount, admin_username, source_channel_id, source_channel_name } = req.body;
 
   const viewer = await getViewerByUsername(target_username);
   const targetAmount = parseInt(amount, 10);
 
-  if (!viewer) {
-    return res.status(404).send(`${target_username} is not in the coin bank yet.`);
-  }
-
-  if (!Number.isFinite(targetAmount) || targetAmount < 0) {
-    return res.status(400).send(`Amount must be 0 or higher.`);
-  }
+  if (!viewer) return res.status(404).send(`${target_username} is not in the coin bank yet.`);
+  if (!Number.isFinite(targetAmount) || targetAmount < 0) return res.status(400).send(`Amount must be 0 or higher.`);
 
   const currentBalance = await getBalanceByUserId(viewer.twitch_user_id);
   const difference = targetAmount - currentBalance;
@@ -293,14 +339,11 @@ app.post('/admin/set-coins', async (req, res) => {
     amount: difference,
     reason: `admin set by ${admin_username || 'unknown admin'}`,
     sourceChannelId: source_channel_id,
-    sourceChannelName: source_channel_name,
+    sourceChannelName: source_channel_name || 'Admin Command',
     eventId: `admin_set_${randomUUID()}`
   });
 
-  if (error) {
-    console.error(error);
-    return res.status(500).send(`Could not set coins: ${error.message}`);
-  }
+  if (error) return res.status(500).send(`Could not set coins: ${error.message}`);
 
   res.send(`${viewer.display_name}'s balance is now ${targetAmount} coins. Admin magic happened ✨`);
 });
