@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const { randomUUID } = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -10,16 +11,71 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+function checkApiKey(req, res) {
+  const apiKey = req.headers['x-api-key'];
+
+  if (apiKey !== process.env.API_SECRET) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+
+  return true;
+}
+
+async function getViewerByUsername(username) {
+  const cleanUsername = username.replace('@', '').toLowerCase();
+
+  const { data, error } = await supabase
+    .from('viewers')
+    .select('twitch_user_id, twitch_login, display_name')
+    .eq('twitch_login', cleanUsername)
+    .single();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return data;
+}
+
+async function getBalanceByUserId(userId) {
+  const { data } = await supabase
+    .from('coin_balances')
+    .select('balance')
+    .eq('twitch_user_id', userId)
+    .single();
+
+  return data?.balance || 0;
+}
+
+async function addCoinTransaction({
+  viewer,
+  amount,
+  reason,
+  sourceChannelId,
+  sourceChannelName,
+  eventId
+}) {
+  const { error } = await supabase.rpc('add_coin_transaction', {
+    p_twitch_user_id: viewer.twitch_user_id,
+    p_twitch_login: viewer.twitch_login,
+    p_display_name: viewer.display_name,
+    p_amount: amount,
+    p_reason: reason,
+    p_source_channel_id: sourceChannelId || 'manual_admin',
+    p_source_channel_name: sourceChannelName || 'Admin Command',
+    p_twitch_event_id: eventId || randomUUID()
+  });
+
+  return error;
+}
+
 app.get('/', (req, res) => {
   res.send('Shared Coins Backend is running');
 });
 
 app.post('/add-coins', async (req, res) => {
-  const apiKey = req.headers['x-api-key'];
-
-  if (apiKey !== process.env.API_SECRET) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!checkApiKey(req, res)) return;
 
   const {
     twitch_user_id,
@@ -54,65 +110,32 @@ app.post('/add-coins', async (req, res) => {
 app.get('/balance/:user_id', async (req, res) => {
   const { user_id } = req.params;
 
-  const { data, error } = await supabase
-    .from('coin_balances')
-    .select('balance')
-    .eq('twitch_user_id', user_id)
-    .single();
+  const balance = await getBalanceByUserId(user_id);
 
-  if (error) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  res.json({ balance: data.balance });
+  res.json({ balance });
 });
 
 app.get('/coins/:username', async (req, res) => {
-  const username = req.params.username.toLowerCase();
+  const viewer = await getViewerByUsername(req.params.username);
 
-  const { data: viewer, error: viewerError } = await supabase
-    .from('viewers')
-    .select('twitch_user_id')
-    .eq('twitch_login', username)
-    .single();
-
-  if (viewerError || !viewer) {
+  if (!viewer) {
     return res.json({ balance: 0 });
   }
 
-  const { data: balanceData, error: balanceError } = await supabase
-    .from('coin_balances')
-    .select('balance')
-    .eq('twitch_user_id', viewer.twitch_user_id)
-    .single();
+  const balance = await getBalanceByUserId(viewer.twitch_user_id);
 
-  if (balanceError || !balanceData) {
-    return res.json({ balance: 0 });
-  }
-
-  res.json({ balance: balanceData.balance });
+  res.json({ balance });
 });
 
 app.get('/coins-message/:username', async (req, res) => {
   const username = req.params.username.toLowerCase();
-
-  const { data: viewer } = await supabase
-    .from('viewers')
-    .select('twitch_user_id, display_name')
-    .eq('twitch_login', username)
-    .single();
+  const viewer = await getViewerByUsername(username);
 
   if (!viewer) {
     return res.send(`${username} has 0 coins… broke behavior 😭`);
   }
 
-  const { data: balanceData } = await supabase
-    .from('coin_balances')
-    .select('balance')
-    .eq('twitch_user_id', viewer.twitch_user_id)
-    .single();
-
-  const balance = balanceData?.balance || 0;
+  const balance = await getBalanceByUserId(viewer.twitch_user_id);
   const user = viewer.display_name || username;
 
   let messages;
@@ -156,6 +179,130 @@ app.get('/coins-message/:username', async (req, res) => {
 
   const message = messages[Math.floor(Math.random() * messages.length)];
   res.send(message);
+});
+
+app.post('/admin/add-coins', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  const {
+    target_username,
+    amount,
+    admin_username,
+    source_channel_id,
+    source_channel_name
+  } = req.body;
+
+  const viewer = await getViewerByUsername(target_username);
+  const coinAmount = parseInt(amount, 10);
+
+  if (!viewer) {
+    return res.status(404).send(`${target_username} is not in the coin bank yet.`);
+  }
+
+  if (!Number.isFinite(coinAmount) || coinAmount <= 0) {
+    return res.status(400).send(`Amount must be a positive number.`);
+  }
+
+  const error = await addCoinTransaction({
+    viewer,
+    amount: coinAmount,
+    reason: `admin add by ${admin_username || 'unknown admin'}`,
+    sourceChannelId: source_channel_id,
+    sourceChannelName: source_channel_name,
+    eventId: `admin_add_${randomUUID()}`
+  });
+
+  if (error) {
+    console.error(error);
+    return res.status(500).send(`Could not add coins: ${error.message}`);
+  }
+
+  const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
+
+  res.send(`${viewer.display_name} got ${coinAmount} coins added. New balance: ${newBalance} coins 💅`);
+});
+
+app.post('/admin/remove-coins', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  const {
+    target_username,
+    amount,
+    admin_username,
+    source_channel_id,
+    source_channel_name
+  } = req.body;
+
+  const viewer = await getViewerByUsername(target_username);
+  const coinAmount = parseInt(amount, 10);
+
+  if (!viewer) {
+    return res.status(404).send(`${target_username} is not in the coin bank yet.`);
+  }
+
+  if (!Number.isFinite(coinAmount) || coinAmount <= 0) {
+    return res.status(400).send(`Amount must be a positive number.`);
+  }
+
+  const error = await addCoinTransaction({
+    viewer,
+    amount: -coinAmount,
+    reason: `admin remove by ${admin_username || 'unknown admin'}`,
+    sourceChannelId: source_channel_id,
+    sourceChannelName: source_channel_name,
+    eventId: `admin_remove_${randomUUID()}`
+  });
+
+  if (error) {
+    console.error(error);
+    return res.status(500).send(`Could not remove coins: ${error.message}`);
+  }
+
+  const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
+
+  res.send(`${viewer.display_name} lost ${coinAmount} coins. New balance: ${newBalance} coins 😭`);
+});
+
+app.post('/admin/set-coins', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  const {
+    target_username,
+    amount,
+    admin_username,
+    source_channel_id,
+    source_channel_name
+  } = req.body;
+
+  const viewer = await getViewerByUsername(target_username);
+  const targetAmount = parseInt(amount, 10);
+
+  if (!viewer) {
+    return res.status(404).send(`${target_username} is not in the coin bank yet.`);
+  }
+
+  if (!Number.isFinite(targetAmount) || targetAmount < 0) {
+    return res.status(400).send(`Amount must be 0 or higher.`);
+  }
+
+  const currentBalance = await getBalanceByUserId(viewer.twitch_user_id);
+  const difference = targetAmount - currentBalance;
+
+  const error = await addCoinTransaction({
+    viewer,
+    amount: difference,
+    reason: `admin set by ${admin_username || 'unknown admin'}`,
+    sourceChannelId: source_channel_id,
+    sourceChannelName: source_channel_name,
+    eventId: `admin_set_${randomUUID()}`
+  });
+
+  if (error) {
+    console.error(error);
+    return res.status(500).send(`Could not set coins: ${error.message}`);
+  }
+
+  res.send(`${viewer.display_name}'s balance is now ${targetAmount} coins. Admin magic happened ✨`);
 });
 
 app.listen(process.env.PORT, () => {
