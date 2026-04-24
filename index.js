@@ -433,6 +433,41 @@ app.post('/admin/set-coins', async (req, res) => {
   res.send(`${viewer.display_name}'s balance is now ${targetAmount} coins. Admin magic happened ✨`);
 });
 
+app.get('/leaderboard', async (req, res) => {
+  const limit = parseInt(req.query.limit || '5', 10);
+
+  const { data, error } = await supabase
+    .from('coin_balances')
+    .select(`
+      twitch_user_id,
+      balance,
+      viewers (
+        twitch_login,
+        display_name
+      )
+    `)
+    .order('balance', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    return res.status(500).send(`Could not load leaderboard: ${error.message}`);
+  }
+
+  if (!data || data.length === 0) {
+    return res.send('No one has coins yet. Broke leaderboard behavior 😭');
+  }
+
+  const leaderboard = data
+    .map((entry, index) => {
+      const viewer = entry.viewers;
+      const name = viewer?.display_name || viewer?.twitch_login || entry.twitch_user_id;
+      return `${index + 1}. ${name}: ${entry.balance} coins`;
+    })
+    .join(' | ');
+
+  res.send(`🏆 Top 5 coin goblins: ${leaderboard}`);
+});
+
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);
 });
