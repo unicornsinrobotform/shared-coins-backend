@@ -52,18 +52,31 @@ async function getViewerByUsername(username) {
 
 async function getOrCreateViewer({ twitch_user_id, twitch_login, display_name }) {
   const cleanLogin = cleanUsername(twitch_login || display_name);
-  const userId = twitch_user_id || `username:${cleanLogin}`;
   const display = display_name || twitch_login || cleanLogin;
+
+  // IMPORTANT:
+  // Check username FIRST so daily claims add to existing balances
+  // instead of creating a duplicate viewer record with a new ID.
+  const existingViewer = await getViewerByUsername(cleanLogin);
+
+  if (existingViewer) {
+    return existingViewer;
+  }
+
+  const userId = twitch_user_id || `username:${cleanLogin}`;
 
   const { error } = await supabase
     .from('viewers')
-    .upsert({
-      twitch_user_id: userId,
-      twitch_login: cleanLogin,
-      display_name: display
-    }, {
-      onConflict: 'twitch_user_id'
-    });
+    .upsert(
+      {
+        twitch_user_id: userId,
+        twitch_login: cleanLogin,
+        display_name: display
+      },
+      {
+        onConflict: 'twitch_user_id'
+      }
+    );
 
   if (error) throw error;
 
@@ -171,7 +184,9 @@ app.post('/daily', async (req, res) => {
 
     if (claimError) {
       if (claimError.code === '23505') {
-        return res.send(`${viewer.display_name} already claimed today's daily from ${streamName} 😭 come back tomorrow`);
+        return res.send(
+          `${viewer.display_name} already claimed today's daily from ${streamName} 😭 come back tomorrow`
+        );
       }
 
       return res.status(500).send(`Daily claim failed: ${claimError.message}`);
@@ -192,7 +207,9 @@ app.post('/daily', async (req, res) => {
 
     const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
 
-    res.send(`${viewer.display_name} claimed ${DAILY_AMOUNT} daily coins from ${streamName} 💅 New balance: ${newBalance} coins`);
+    res.send(
+      `${viewer.display_name} claimed ${DAILY_AMOUNT} daily coins from ${streamName} 💅 New balance: ${newBalance} coins`
+    );
   } catch (error) {
     res.status(500).send(error.message || 'Daily claim failed.');
   }
@@ -269,13 +286,21 @@ app.get('/coins-message/:username', async (req, res) => {
 app.post('/admin/add-coins', async (req, res) => {
   if (!checkApiKey(req, res)) return;
 
-  const { target_username, amount, admin_username, source_channel_id, source_channel_name } = req.body;
+  const {
+    target_username,
+    amount,
+    admin_username,
+    source_channel_id,
+    source_channel_name
+  } = req.body;
 
   const viewer = await getViewerByUsername(target_username);
   const coinAmount = parseInt(amount, 10);
 
   if (!viewer) return res.status(404).send(`${target_username} is not in the coin bank yet.`);
-  if (!Number.isFinite(coinAmount) || coinAmount <= 0) return res.status(400).send(`Amount must be a positive number.`);
+  if (!Number.isFinite(coinAmount) || coinAmount <= 0) {
+    return res.status(400).send(`Amount must be a positive number.`);
+  }
 
   const error = await addCoinTransaction({
     viewer,
@@ -296,13 +321,21 @@ app.post('/admin/add-coins', async (req, res) => {
 app.post('/admin/remove-coins', async (req, res) => {
   if (!checkApiKey(req, res)) return;
 
-  const { target_username, amount, admin_username, source_channel_id, source_channel_name } = req.body;
+  const {
+    target_username,
+    amount,
+    admin_username,
+    source_channel_id,
+    source_channel_name
+  } = req.body;
 
   const viewer = await getViewerByUsername(target_username);
   const coinAmount = parseInt(amount, 10);
 
   if (!viewer) return res.status(404).send(`${target_username} is not in the coin bank yet.`);
-  if (!Number.isFinite(coinAmount) || coinAmount <= 0) return res.status(400).send(`Amount must be a positive number.`);
+  if (!Number.isFinite(coinAmount) || coinAmount <= 0) {
+    return res.status(400).send(`Amount must be a positive number.`);
+  }
 
   const error = await addCoinTransaction({
     viewer,
@@ -323,13 +356,21 @@ app.post('/admin/remove-coins', async (req, res) => {
 app.post('/admin/set-coins', async (req, res) => {
   if (!checkApiKey(req, res)) return;
 
-  const { target_username, amount, admin_username, source_channel_id, source_channel_name } = req.body;
+  const {
+    target_username,
+    amount,
+    admin_username,
+    source_channel_id,
+    source_channel_name
+  } = req.body;
 
   const viewer = await getViewerByUsername(target_username);
   const targetAmount = parseInt(amount, 10);
 
   if (!viewer) return res.status(404).send(`${target_username} is not in the coin bank yet.`);
-  if (!Number.isFinite(targetAmount) || targetAmount < 0) return res.status(400).send(`Amount must be 0 or higher.`);
+  if (!Number.isFinite(targetAmount) || targetAmount < 0) {
+    return res.status(400).send(`Amount must be 0 or higher.`);
+  }
 
   const currentBalance = await getBalanceByUserId(viewer.twitch_user_id);
   const difference = targetAmount - currentBalance;
