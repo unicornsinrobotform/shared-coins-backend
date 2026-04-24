@@ -518,11 +518,21 @@ app.post('/fishing-reward', async (req, res) => {
 
     const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
 
+    if (cleanRarity === 'legendary') {
+      return res.send(
+        `${viewer.display_name} JUST PULLED A LEGENDARY ${catch_name.toUpperCase()}??? HELLO??? +${rewardAmount} COINS 💅🔥 New balance: ${newBalance}`
+      );
+    }
+
     const messages = [
-      `${viewer.display_name} caught a ${rarity} ${catch_name} and earned ${rewardAmount} coins 💅 New balance: ${newBalance}`,
-      `${viewer.display_name} pulled a ${rarity} ${catch_name} and the economy said +${rewardAmount} coins 😭`,
-      `${viewer.display_name} caught a ${rarity} ${catch_name}. Okay fisher icon, +${rewardAmount} coins 🎣`,
-      `${viewer.display_name} got rewarded for a ${rarity} ${catch_name}: +${rewardAmount} coins 👀`
+      `${viewer.display_name} really caught a ${rarity} ${catch_name} and said “run me my coins” 💅 +${rewardAmount} | Balance: ${newBalance}`,
+      `${viewer.display_name} pulled a ${rarity} ${catch_name}… okay main character energy 😭 +${rewardAmount} | Balance: ${newBalance}`,
+      `${viewer.display_name} caught a ${rarity} ${catch_name} and now they think they’re better than us +${rewardAmount} 💀 | Balance: ${newBalance}`,
+      `${viewer.display_name} with a ${rarity} ${catch_name}?? oh they’re eating today +${rewardAmount} | Balance: ${newBalance}`,
+      `${viewer.display_name} got a ${rarity} ${catch_name}… don’t get cocky now +${rewardAmount} 👀 | Balance: ${newBalance}`,
+      `${viewer.display_name} caught a ${rarity} ${catch_name} and immediately became insufferable +${rewardAmount} 💅 | Balance: ${newBalance}`,
+      `${viewer.display_name} said “watch this” and pulled a ${rarity} ${catch_name} +${rewardAmount} 😭 | Balance: ${newBalance}`,
+      `${viewer.display_name} caught a ${rarity} ${catch_name}… yeah okay flex I guess +${rewardAmount} | Balance: ${newBalance}`
     ];
 
     res.send(messages[Math.floor(Math.random() * messages.length)]);
