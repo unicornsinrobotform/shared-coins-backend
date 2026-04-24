@@ -42,21 +42,30 @@ async function getViewerByUsername(username) {
 
   const { data, error } = await supabase
     .from('viewers')
-    .select('twitch_user_id, twitch_login, display_name')
-    .eq('twitch_login', clean)
-    .single();
+    .select(`
+      twitch_user_id,
+      twitch_login,
+      display_name,
+      coin_balances (
+        balance,
+        updated_at
+      )
+    `)
+    .eq('twitch_login', clean);
 
-  if (error || !data) return null;
-  return data;
+  if (error || !data || data.length === 0) return null;
+
+  const withBalance = data.find(
+    viewer => viewer.coin_balances && viewer.coin_balances.length > 0
+  );
+
+  return withBalance || data[0];
 }
 
 async function getOrCreateViewer({ twitch_user_id, twitch_login, display_name }) {
   const cleanLogin = cleanUsername(twitch_login || display_name);
   const display = display_name || twitch_login || cleanLogin;
 
-  // IMPORTANT:
-  // Check username FIRST so daily claims add to existing balances
-  // instead of creating a duplicate viewer record with a new ID.
   const existingViewer = await getViewerByUsername(cleanLogin);
 
   if (existingViewer) {
