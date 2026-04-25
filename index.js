@@ -707,7 +707,7 @@ app.post('/gamble', async (req, res) => {
     else {
       winnings = betAmount * 3;
 
-      resultMessage = `🎰JACKPOT|${viewer.display_name} HIT THE JACKPOT??? HELLO??? +${winnings} COINS 💅🔥`;
+      resultMessage = `🎰 ${viewer.display_name} HIT THE JACKPOT??? HELLO??? | Won ${winnings} Coins 💅🔥`;
     }
 
     const error = await addCoinTransaction({
