@@ -541,6 +541,94 @@ app.post('/fishing-reward', async (req, res) => {
   }
 });
 
+app.post('/event-reward', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  try {
+    const {
+      twitch_login,
+      display_name,
+      event_type,
+      sub_tier,
+      source_channel_name
+    } = req.body;
+
+    const eventType = String(event_type || '').toLowerCase();
+    const tier = String(sub_tier || '').toLowerCase();
+
+    let rewardAmount = 0;
+    let reason = '';
+
+    if (eventType === 'follow') {
+      rewardAmount = 25;
+      reason = 'new follow';
+    } else if (eventType === 'first_time_chat') {
+      rewardAmount = 15;
+      reason = 'first time chatter';
+    } else if (eventType === 'sub') {
+      if (tier.includes('3000') || tier.includes('tier 3') || tier.includes('3')) {
+        rewardAmount = 500;
+        reason = 'tier 3 sub';
+      } else if (tier.includes('2000') || tier.includes('tier 2') || tier.includes('2')) {
+        rewardAmount = 250;
+        reason = 'tier 2 sub';
+      } else {
+        rewardAmount = 100;
+        reason = 'tier 1 or prime sub';
+      }
+    }
+
+    if (rewardAmount <= 0) {
+      return res.send('');
+    }
+
+    const viewer = await getOrCreateViewer({
+      twitch_login,
+      display_name
+    });
+
+    const error = await addCoinTransaction({
+      viewer,
+      amount: rewardAmount,
+      reason,
+      sourceChannelId: eventType,
+      sourceChannelName: source_channel_name || 'Stream Event',
+      eventId: `event_${eventType}_${viewer.twitch_user_id}_${Date.now()}_${randomUUID()}`
+    });
+
+    if (error) {
+      return res.status(500).send(`Event reward failed: ${error.message}`);
+    }
+
+    const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
+
+    const messages = {
+      follow: [
+        `${viewer.display_name} followed and got ${rewardAmount} coins 💅 welcome in`,
+        `${viewer.display_name} hit follow and immediately got paid. Icon behavior +${rewardAmount} coins`
+      ],
+      first_time_chat: [
+        `${viewer.display_name} said hi for the first time and got ${rewardAmount} coins 😭 welcome in`,
+        `${viewer.display_name} entered chat and the economy noticed +${rewardAmount} coins`
+      ],
+      sub: [
+        `${viewer.display_name} subscribed and got ${rewardAmount} coins 💅 thank youuuu`,
+        `${viewer.display_name} subbed and got paid because we love commitment +${rewardAmount} coins`
+      ]
+    };
+
+    const pool = messages[eventType] || [
+      `${viewer.display_name} earned ${rewardAmount} coins`
+    ];
+
+    const message = pool[Math.floor(Math.random() * pool.length)];
+
+    res.send(`${message} | Balance: ${newBalance} Coins`);
+  } catch (error) {
+    res.status(500).send(error.message || 'Event reward failed.');
+  }
+});
+
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);
 });
