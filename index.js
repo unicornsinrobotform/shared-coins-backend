@@ -901,6 +901,12 @@ app.post('/redeem', async (req, res) => {
       source_channel_name
     } = req.body;
 
+    const redeemCost = parseInt(cost, 10);
+
+    if (!Number.isFinite(redeemCost) || redeemCost <= 0) {
+      return res.send(`That redeem cost is not valid 😭`);
+    }
+
     const viewer = await getOrCreateViewer({
       twitch_login,
       display_name
@@ -908,13 +914,13 @@ app.post('/redeem', async (req, res) => {
 
     const balance = await getBalanceByUserId(viewer.twitch_user_id);
 
-    if (balance < cost) {
+    if (balance < redeemCost) {
       return res.send(`${viewer.display_name} tried to redeem ${reward_name} but is broke 😭`);
     }
 
     const error = await addCoinTransaction({
       viewer,
-      amount: -cost,
+      amount: -redeemCost,
       reason: `redeem: ${reward_name}`,
       sourceChannelId: 'redeem',
       sourceChannelName: source_channel_name || 'Redeem',
@@ -928,8 +934,8 @@ app.post('/redeem', async (req, res) => {
     const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
 
     res.send(
-  `REDEEM|${reward_name}|${viewer.display_name} redeemed ${reward_name} 💅 -${cost} Coins | Balance: ${newBalance}`
-);
+      `REDEEM|${reward_name}|${viewer.display_name} redeemed ${reward_name} 💅 -${redeemCost} Coins | Balance: ${newBalance}`
+    );
 
   } catch (err) {
     res.status(500).send(err.message);
