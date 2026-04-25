@@ -668,7 +668,7 @@ app.post('/gamble', async (req, res) => {
       const messages = [
         `${viewer.display_name} lost ${betAmount} coins… yeah that felt predictable 💀`,
         `${viewer.display_name} really thought this would go well 😭 -${betAmount} coins`,
-        `${viewer.display_name} gambled ${betAmount} coins and immediately regretted it`,
+        `${viewer.display_name} gambled ${betAmount} coins and immediately regretted it, -${betAmount}`,
         `${viewer.display_name} lost ${betAmount} coins. Financial decisions were made.`
       ];
 
