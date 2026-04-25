@@ -628,6 +628,110 @@ if (eventType === 'follow') {
   }
 });
 
+app.post('/gamble', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  try {
+    const {
+      twitch_login,
+      display_name,
+      amount,
+      source_channel_name
+    } = req.body;
+
+    const betAmount = parseInt(amount, 10);
+
+    if (!Number.isFinite(betAmount) || betAmount <= 0) {
+      return res.send(`Be serious 😭 use !gamble 50`);
+    }
+
+    const viewer = await getOrCreateViewer({
+      twitch_login,
+      display_name
+    });
+
+    const currentBalance = await getBalanceByUserId(viewer.twitch_user_id);
+
+    if (currentBalance < betAmount) {
+      return res.send(`${viewer.display_name} tried to gamble ${betAmount} coins with only ${currentBalance}… be so serious 😭`);
+    }
+
+    const roll = Math.random();
+
+    let winnings = 0;
+    let resultMessage = '';
+
+    // 💀 LOSE (50%)
+    if (roll < 0.5) {
+      winnings = -betAmount;
+
+      const messages = [
+        `${viewer.display_name} lost ${betAmount} coins… yeah that felt predictable 💀`,
+        `${viewer.display_name} really thought this would go well 😭 -${betAmount} coins`,
+        `${viewer.display_name} gambled ${betAmount} coins and immediately regretted it`,
+        `${viewer.display_name} lost ${betAmount} coins. Financial decisions were made.`
+      ];
+
+      resultMessage = messages[Math.floor(Math.random() * messages.length)];
+    }
+
+    // 😭 SMALL WIN (30%)
+    else if (roll < 0.8) {
+      winnings = Math.floor(betAmount * 0.5);
+
+      const messages = [
+        `${viewer.display_name} barely survived and got +${winnings} coins… not impressive but okay 😭`,
+        `${viewer.display_name} made +${winnings} coins. A win is a win I guess`,
+        `${viewer.display_name} walked away with +${winnings} coins… humble moment`,
+        `${viewer.display_name} got +${winnings} coins. We’ll allow it 😌`
+      ];
+
+      resultMessage = messages[Math.floor(Math.random() * messages.length)];
+    }
+
+    // 💅 BIG WIN (17%)
+    else if (roll < 0.97) {
+      winnings = betAmount;
+
+      const messages = [
+        `${viewer.display_name} doubled it?? okay relax 💅 +${winnings} coins`,
+        `${viewer.display_name} won +${winnings} coins… don’t get bold now`,
+        `${viewer.display_name} really said “watch this” and won +${winnings} 😭`,
+        `${viewer.display_name} got +${winnings} coins and now thinks they’re better than us`
+      ];
+
+      resultMessage = messages[Math.floor(Math.random() * messages.length)];
+    }
+
+    // 🔥 JACKPOT (3%)
+    else {
+      winnings = betAmount * 3;
+
+      resultMessage = `${viewer.display_name} HIT THE JACKPOT??? HELLO??? +${winnings} COINS 💅🔥`;
+    }
+
+    const error = await addCoinTransaction({
+      viewer,
+      amount: winnings,
+      reason: `gamble ${betAmount}`,
+      sourceChannelId: 'gamble',
+      sourceChannelName: source_channel_name || 'Gamble Command',
+      eventId: `gamble_${viewer.twitch_user_id}_${Date.now()}_${randomUUID()}`
+    });
+
+    if (error) {
+      return res.status(500).send(`Gamble failed: ${error.message}`);
+    }
+
+    const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
+
+    res.send(`${resultMessage} | Balance: ${newBalance} Coins`);
+
+  } catch (error) {
+    res.status(500).send(error.message || 'Gamble failed.');
+  }
+});
+
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);
 });
