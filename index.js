@@ -559,25 +559,24 @@ app.post('/event-reward', async (req, res) => {
     let rewardAmount = 0;
     let reason = '';
 
-    if (eventType === 'follow') {
-      rewardAmount = 25;
-      reason = 'new follow';
-    } else if (eventType === 'first_time_chat') {
-      rewardAmount = 15;
-      reason = 'first time chatter';
-    } else if (eventType === 'sub') {
-      if (tier.includes('3000') || tier.includes('tier 3') || tier.includes('3')) {
-        rewardAmount = 500;
-        reason = 'tier 3 sub';
-      } else if (tier.includes('2000') || tier.includes('tier 2') || tier.includes('2')) {
-        rewardAmount = 250;
-        reason = 'tier 2 sub';
-      } else {
-        rewardAmount = 100;
-        reason = 'tier 1 or prime sub';
-      }
-    }
-
+if (eventType === 'follow') {
+  rewardAmount = 25;
+  reason = 'new follow';
+} else if (eventType === 'first_time_chat') {
+  rewardAmount = 15;
+  reason = 'first time chatter';
+} else if (eventType === 'sub') {
+  if (tier.includes('3000') || tier.includes('3')) {
+    rewardAmount = 500;
+    reason = 'tier 3 sub';
+  } else if (tier.includes('2000') || tier.includes('2')) {
+    rewardAmount = 250;
+    reason = 'tier 2 sub';
+  } else {
+    rewardAmount = 100;
+    reason = 'tier 1 or prime sub';
+  }
+}
     if (rewardAmount <= 0) {
       return res.send('');
     }
