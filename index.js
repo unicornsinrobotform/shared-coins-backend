@@ -465,7 +465,7 @@ app.get('/leaderboard', async (req, res) => {
     })
     .join(' | ');
 
-  res.send(`🏆 Top 5 coin goblins: ${leaderboard}`);
+  res.send(`🏆 Top 5 coin Baddies: ${leaderboard}`);
 });
 
 app.post('/fishing-reward', async (req, res) => {
