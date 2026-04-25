@@ -732,6 +732,111 @@ app.post('/gamble', async (req, res) => {
   }
 });
 
+app.post('/work', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  try {
+    const {
+      twitch_login,
+      display_name,
+      source_channel_name
+    } = req.body;
+
+    const viewer = await getOrCreateViewer({
+      twitch_login,
+      display_name
+    });
+
+    // 🎲 Base earnings (5–15)
+    let earned = Math.floor(Math.random() * 11) + 5;
+
+    // 🎯 3% rare job chance
+    const isRare = Math.random() < 0.03;
+
+    // 💅 Normal jobs
+    const jobs = [
+      "went on feetfinder and sold 2 pics (allegedly)",
+      "got paid to flirt with someone’s situationship… good luck with that",
+      "clocked in as a delusion specialist… and excelled",
+      "worked a shift at the audacity factory… management level",
+      "sold confidence they absolutely did not have",
+      "ran a business built entirely on vibes… no structure whatsoever",
+      "got paid to act like they knew what was going on… they didn’t",
+      "worked as a certified drama distributor… again",
+      "clocked in as a chaos coordinator… as expected",
+      "got paid to escalate a situation… for no reason",
+      "did consulting for bad decisions… top client",
+      "worked as a professional side-eye giver… critically acclaimed",
+      "got paid to be slightly problematic… consistent work",
+      "ran a pop-up shop selling pure audacity… sold out instantly",
+      "worked as a personal menace for hire… booked and busy",
+      "did freelance nonsense… no one stopped them",
+      "clocked in as a confidence dealer… overselling heavily",
+      "worked as a certified overreactor… award-winning"
+    ];
+
+    // 🔥 Rare insane jobs (3%)
+    const rareJobs = [
+      "accidentally ran the company for 5 minutes",
+      "got promoted and immediately abused the power",
+      "was legally not supposed to be there but got paid anyway",
+      "got paid way too much for doing absolutely nothing",
+      "took over the workplace and nobody stopped them",
+      "clocked in and became the problem instantly",
+      "got paid to leave early and still complained",
+      "showed up, did nothing, and still got praised",
+      "was the reason HR had a meeting later",
+      "got paid to fix a problem they caused"
+    ];
+
+    const endings = [
+      "… impressive, I guess 💅",
+      "… not too much now 😭",
+      "… we’re watching you 👀",
+      "… okay miss thing",
+      "… suddenly they’re loud",
+      "… that’s a choice"
+    ];
+
+    let job;
+
+    if (isRare) {
+      job = rareJobs[Math.floor(Math.random() * rareJobs.length)];
+
+      // 💥 Rare bonus payout
+      earned += Math.floor(Math.random() * 11) + 10; // +10–20 bonus
+    } else {
+      job = jobs[Math.floor(Math.random() * jobs.length)];
+    }
+
+    const ending = endings[Math.floor(Math.random() * endings.length)];
+
+    const error = await addCoinTransaction({
+      viewer,
+      amount: earned,
+      reason: isRare ? 'rare work event' : 'worked a shift',
+      sourceChannelId: 'work',
+      sourceChannelName: source_channel_name || 'Work Command',
+      eventId: `work_${viewer.twitch_user_id}_${Date.now()}_${randomUUID()}`
+    });
+
+    if (error) {
+      return res.status(500).send(`Work failed: ${error.message}`);
+    }
+
+    const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
+
+    const msg = isRare
+      ? `💼✨ ${viewer.display_name} ${job} and made ${earned} Coins… HELLO??? rare behavior 💅`
+      : `💼 ${viewer.display_name} ${job} and made ${earned} Coins ${ending}`;
+
+    res.send(`${msg} | Balance: ${newBalance} Coins`);
+
+  } catch (error) {
+    res.status(500).send(error.message || 'Work failed.');
+  }
+});
+
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);
 });
