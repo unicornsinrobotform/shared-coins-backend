@@ -485,8 +485,8 @@ app.post('/fishing-reward', async (req, res) => {
 
     const rewardMap = {
       junk: 0,
-      common: 0,
-      uncommon: 0,
+      common: 1,
+      uncommon: 3,
       rare: 10,
       epic: 25,
       legendary: 75
