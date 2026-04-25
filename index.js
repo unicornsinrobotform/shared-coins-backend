@@ -183,6 +183,7 @@ app.post('/daily', async (req, res) => {
       display_name
     });
 
+    // 🚫 Prevent duplicate
     const { error: claimError } = await supabase
       .from('daily_claims')
       .insert({
@@ -194,33 +195,84 @@ app.post('/daily', async (req, res) => {
     if (claimError) {
       if (claimError.code === '23505') {
         return res.send(
-          `${viewer.display_name} already claimed today's daily from ${streamName} 😭 come back tomorrow`
+          `${viewer.display_name} already claimed today's daily from ${streamName} 😭`
         );
       }
-
-      return res.status(500).send(`Daily claim failed: ${claimError.message}`);
+      return res.status(500).send(claimError.message);
     }
+
+    // 🧠 STREAK LOGIC
+    const { data: streakData } = await supabase
+      .from('daily_streaks')
+      .select('*')
+      .eq('twitch_user_id', viewer.twitch_user_id)
+      .eq('source_channel_name', streamName)
+      .single();
+
+    let streak = 1;
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const yesterdayStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Chicago',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(yesterday);
+
+    if (streakData && streakData.last_claim_date === yesterdayStr) {
+      streak = streakData.streak_count + 1;
+    }
+
+    let reward;
+
+    if (streak === 1) reward = 50;
+    else if (streak === 2) reward = 60;
+    else if (streak === 3) reward = 75;
+    else if (streak === 4) reward = 90;
+    else if (streak === 5) reward = 110;
+    else if (streak === 6) reward = 135;
+    else reward = 175;
+
+    await supabase.from('daily_streaks').upsert({
+      twitch_user_id: viewer.twitch_user_id,
+      source_channel_name: streamName,
+      streak_count: streak,
+      last_claim_date: today
+    });
 
     const addError = await addCoinTransaction({
       viewer,
-      amount: DAILY_AMOUNT,
-      reason: `daily claim from ${streamName}`,
+      amount: reward,
+      reason: `daily streak ${streak}`,
       sourceChannelId: source_channel_id || 'daily',
       sourceChannelName: streamName,
       eventId: `daily_${viewer.twitch_user_id}_${streamName}_${today}_${randomUUID()}`
     });
 
     if (addError) {
-      return res.status(500).send(`Coins could not be added: ${addError.message}`);
+      return res.status(500).send(addError.message);
     }
 
     const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
 
-    res.send(
-      `${viewer.display_name} claimed ${DAILY_AMOUNT} daily coins from ${streamName} 💅 New balance: ${newBalance} coins`
-    );
+    let message;
+
+    if (streak >= 7) {
+      message = `${viewer.display_name} is on a ${streak} day streak??? oh they’re committed 💅 +${reward}`;
+    } else if (streak >= 4) {
+      message = `${viewer.display_name} hit day ${streak}… okay consistency 👀 +${reward}`;
+    } else if (streak >= 2) {
+      message = `${viewer.display_name} came back for day ${streak} 😌 +${reward}`;
+    } else {
+      message = `${viewer.display_name} started a streak… let’s see how long this lasts 😭 +${reward}`;
+    }
+
+    res.send(`${message} Coins | Balance: ${newBalance}`);
+
   } catch (error) {
-    res.status(500).send(error.message || 'Daily claim failed.');
+    res.status(500).send(error.message || 'Daily failed.');
   }
 });
 
@@ -834,6 +886,53 @@ app.post('/work', async (req, res) => {
 
   } catch (error) {
     res.status(500).send(error.message || 'Work failed.');
+  }
+});
+
+app.post('/redeem', async (req, res) => {
+  if (!checkApiKey(req, res)) return;
+
+  try {
+    const {
+      twitch_login,
+      display_name,
+      cost,
+      reward_name,
+      source_channel_name
+    } = req.body;
+
+    const viewer = await getOrCreateViewer({
+      twitch_login,
+      display_name
+    });
+
+    const balance = await getBalanceByUserId(viewer.twitch_user_id);
+
+    if (balance < cost) {
+      return res.send(`${viewer.display_name} tried to redeem ${reward_name} but is broke 😭`);
+    }
+
+    const error = await addCoinTransaction({
+      viewer,
+      amount: -cost,
+      reason: `redeem: ${reward_name}`,
+      sourceChannelId: 'redeem',
+      sourceChannelName: source_channel_name || 'Redeem',
+      eventId: `redeem_${viewer.twitch_user_id}_${Date.now()}_${randomUUID()}`
+    });
+
+    if (error) {
+      return res.status(500).send(error.message);
+    }
+
+    const newBalance = await getBalanceByUserId(viewer.twitch_user_id);
+
+    res.send(
+      `${viewer.display_name} redeemed ${reward_name} 💅 -${cost} Coins | Balance: ${newBalance}`
+    );
+
+  } catch (err) {
+    res.status(500).send(err.message);
   }
 });
 
