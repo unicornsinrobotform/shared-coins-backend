@@ -488,18 +488,19 @@ app.post('/admin/set-coins', async (req, res) => {
 app.get('/leaderboard', async (req, res) => {
   const limit = parseInt(req.query.limit || '5', 10);
 
-  const { data, error } = await supabase
-    .from('coin_balances')
-    .select(`
-      twitch_user_id,
-      balance,
-      viewers (
-        twitch_login,
-        display_name
-      )
-    `)
-    .order('balance', { ascending: false })
-    .limit(limit);
+const { data, error } = await supabase
+  .from('coin_balances')
+  .select(`
+    twitch_user_id,
+    balance,
+    viewers (
+      twitch_login,
+      display_name
+    )
+  `)
+  .neq('twitch_user_id', 'username:firebot')
+  .order('balance', { ascending: false })
+  .limit(limit);
 
   if (error) {
     return res.status(500).send(`Could not load leaderboard: ${error.message}`);
